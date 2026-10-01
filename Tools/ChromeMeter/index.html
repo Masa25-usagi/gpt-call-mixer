@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MVB Local Signal Meter</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { max-width: 760px; margin: 48px auto; padding: 0 20px; background: #111; color: #eee; }
+    section { padding: 22px; border: 1px solid #444; border-radius: 14px; background: #1c1c1e; }
+    h1 { margin-top: 0; }
+    p { line-height: 1.55; color: #bbb; }
+    label { display: block; margin: 18px 0 7px; }
+    select, button { font: inherit; padding: 10px 12px; border-radius: 8px; }
+    select { width: 100%; background: #2a2a2d; color: #fff; border: 1px solid #555; }
+    button { margin: 12px 8px 0 0; border: 0; background: #0a84ff; color: white; cursor: pointer; }
+    button.secondary { background: #4a4a4f; }
+    meter { display: block; }
+    .track { height: 26px; margin-top: 22px; border-radius: 13px; background: #333; overflow: hidden; }
+    .level { width: 0; height: 100%; background: linear-gradient(90deg, #32d74b, #ffd60a, #ff453a); transition: width 60ms linear; }
+    .numbers { margin-top: 12px; font: 600 20px ui-monospace, monospace; }
+    .status { min-height: 24px; margin-top: 12px; color: #8ecbff; }
+    code { color: #ddd; }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>MVB Local Signal Meter</h1>
+    <p>入力の瞬間ピークだけをブラウザ内で計算します。録音、保存、アップロード、スピーカーへの再出力は行いません。</p>
+
+    <label for="device">入力デバイス</label>
+    <select id="device"></select>
+
+    <button id="reveal" class="secondary">デバイス名を表示・更新</button>
+    <button id="start">計測開始</button>
+    <button id="stop" class="secondary">停止</button>
+
+    <div class="track" aria-label="入力レベル"><div class="level" id="level"></div></div>
+    <div class="numbers">現在 <span id="current">0.000000</span> / 最大 <span id="peak">0.000000</span></div>
+    <div class="status" id="status">待機中</div>
+  </section>
+
+  <script>
+    const deviceSelect = document.querySelector('#device');
+    const currentNode = document.querySelector('#current');
+    const peakNode = document.querySelector('#peak');
+    const levelNode = document.querySelector('#level');
+    const statusNode = document.querySelector('#status');
+    let stream;
+    let audioContext;
+    let animationFrame;
+    let maximum = 0;
+
+    async function enumerate() {
+      const devices = (await navigator.mediaDevices.enumerateDevices())
+        .filter(device => device.kind === 'audioinput');
+      deviceSelect.replaceChildren();
+      for (const [index, device] of devices.entries()) {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.textContent = device.label || `入力 ${index + 1}`;
+        deviceSelect.append(option);
+      }
+      const preferred = [...deviceSelect.options]
+        .find(option => option.textContent.includes('MVB Meet'));
+      if (preferred) {
+        deviceSelect.value = preferred.value;
+        statusNode.textContent = `選択済み: ${preferred.textContent}`;
+      } else {
+        statusNode.textContent = 'MVB Meet → ChatGPTが見えない場合は、ヘルパーの開始状態を確認してください。';
+      }
+    }
+
+    async function revealLabels() {
+      statusNode.textContent = 'Chromeのマイク許可を確認中…';
+      const temporary = await navigator.mediaDevices.getUserMedia({audio: true});
+      temporary.getTracks().forEach(track => track.stop());
+      await enumerate();
+    }
+
+    async function startMeter() {
+      stopMeter();
+      maximum = 0;
+      const deviceId = deviceSelect.value;
+      if (!deviceId) throw new Error('入力デバイスがありません');
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: {exact: deviceId},
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      });
+      audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      const samples = new Float32Array(analyser.fftSize);
+      statusNode.textContent = `計測中: ${deviceSelect.selectedOptions[0].textContent}`;
+
+      const update = () => {
+        analyser.getFloatTimeDomainData(samples);
+        let peak = 0;
+        for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+        maximum = Math.max(maximum, peak);
+        currentNode.textContent = peak.toFixed(6);
+        peakNode.textContent = maximum.toFixed(6);
+        levelNode.style.width = `${Math.min(100, peak * 250)}%`;
+        animationFrame = requestAnimationFrame(update);
+      };
+      update();
+    }
+
+    function stopMeter() {
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (audioContext) audioContext.close();
+      animationFrame = stream = audioContext = undefined;
+      statusNode.textContent = '停止しました';
+    }
+
+    document.querySelector('#reveal').addEventListener('click', () => revealLabels().catch(showError));
+    document.querySelector('#start').addEventListener('click', () => startMeter().catch(showError));
+    document.querySelector('#stop').addEventListener('click', stopMeter);
+    function showError(error) { statusNode.textContent = `エラー: ${error.message}`; }
+    enumerate().catch(showError);
+  </script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>ja</string>
+    <key>CFBundleExecutable</key>
+    <string>GPTCallMixer</string>
+    <key>CFBundleIdentifier</key>
+    <string>jp.local.gptcallmixer</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>GPT Call Mixer</string>
+    <key>CFBundleDisplayName</key>
+    <string>GPT Call Mixer</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.2</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>選択した通話アプリとChatGPT Voiceのシステム音声を、相互の仮想入力へミックスマイナス転送するために使用します。録音ファイルは作成しません。</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>選択した物理マイクの音声をChatGPT Voiceと通話アプリの両方へ送るために使用します。録音ファイルは作成しません。</string>
+</dict>
+</plist>

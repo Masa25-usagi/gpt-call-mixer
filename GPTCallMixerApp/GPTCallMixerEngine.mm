@@ -171,6 +171,8 @@ NSString *ProcessFamilyKey(GPTAudioCandidate *candidate) {
     if ([value containsString:@"com.vivaldi.vivaldi"] || [value containsString:@"/vivaldi.app/"]) return @"browser.vivaldi";
     if ([value containsString:@"com.hnc.discord"] || [value containsString:@"com.discordapp.discord"]
         || [value containsString:@"com.discord.discord"] || [value containsString:@"/discord.app/"]) return @"call.discord";
+    if ([value containsString:@"com.tinyspeck.slackmacgap"] || [value containsString:@"/slack.app/"]
+        || [value containsString:@"slack helper"]) return @"call.slack";
     if ([value containsString:@"com.openai.codex"] || [value containsString:@"com.openai.chatgpt"]
         || [value containsString:@"com.openai.chat"] || [value containsString:@"/chatgpt.app/"]
         || [value containsString:@"/codex.app/"]) return @"gpt.desktop";
@@ -188,6 +190,7 @@ NSString *ProcessFamilyName(NSString *key, NSString *fallback) {
         @"browser.opera": @"Opera（ブラウザ全体）",
         @"browser.vivaldi": @"Vivaldi（ブラウザ全体）",
         @"call.discord": @"Discord（アプリ全体）",
+        @"call.slack": @"Slack（アプリ全体・ハドル）",
         @"gpt.desktop": @"ChatGPT / Codex（アプリ全体）"
     };
     return names[key] ?: fallback;

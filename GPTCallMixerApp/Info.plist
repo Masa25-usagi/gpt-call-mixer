@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.2.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.2</string>
     <key>NSPrincipalClass</key>
@@ -27,8 +27,8 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSAudioCaptureUsageDescription</key>
-    <string>選択した通話アプリとChatGPT Voiceのシステム音声を、相互の仮想入力へミックスマイナス転送するために使用します。録音ファイルは作成しません。</string>
+    <string>選択した通話アプリやChatGPT Voiceのシステム音声を仮想入力へ送ります。Meet議事録モードではSlack/Discordの会話をMeetへ送ります。録音ファイルは作成しません。</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>選択した物理マイクの音声をChatGPT Voiceと通話アプリの両方へ送るために使用します。録音ファイルは作成しません。</string>
+    <string>選択した物理マイクの音声をChatGPT Voiceや通話アプリへ送ります。Meet議事録モードでは自分の声をMeetへ送ります。録音ファイルは作成しません。</string>
 </dict>
 </plist>

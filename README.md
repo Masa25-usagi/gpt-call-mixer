@@ -1,5 +1,7 @@
 # GPT Call Mixer
 
+ソースバージョン: **0.2.0**。変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
+
 Google Meetなどの通話アプリとChatGPT音声の間に、物理マイクも混ぜて送るmacOS用のローカル音声ミキサーです。
 
 | 仮想デバイス | 送る音声 |
@@ -14,7 +16,7 @@ Google Meetなどの通話アプリとChatGPT音声の間に、物理マイク�
 ## 必要なもの
 
 - macOS 14.2以降とXcode開発環境。
-- 現在のGPT Call MixerビルドスクリプトはIntel `x86_64` を対象としています。Apple Silicon用のビルド・動作は未検証です。
+- ビルドスクリプトは既定でApple Silicon（`arm64`）とIntel（`x86_64`）のユニバーサルバイナリを作ります。Intelのみにする場合は `GPT_CALL_MIXER_ARCHS=x86_64` を指定します。Apple Siliconでの動作は実機で確認してください。
 - 仮想デバイスを使うには付属のCore Audio HALドライバ2本の導入が必要です。
 
 ## ビルド
@@ -23,7 +25,7 @@ Google Meetなどの通話アプリとChatGPT音声の間に、物理マイク�
 ./script/build_gpt_call_mixer.sh --verify
 ```
 
-アプリ、ドライバ2本、リングバッファのテストをビルドし、アドホック署名を検証します。ドライバのインストール、アプリ起動、管理者権限の取得、Core Audioの再起動は行いません。
+アプリ、ドライバ2本、リングバッファとモード切替のテストをビルドし、アドホック署名を検証します。モード切替のテストは架空の音声エンジンと隔離した設定を使い、音声を取り込みません。ドライバのインストール、アプリ起動、管理者権限の取得、Core Audioの再起動は行いません。
 
 成果物は `dist/GPTCallMixer-local-build.zip`。展開すると `GPTCallMixer.app` と `Drivers/` が入っています。開発用コピーは `dist/GPTCallMixer.app` と `dist/GPTCallMixerDrivers/` にも生成します。アドホック署名のためDeveloper ID署名・公証済みの配布アプリではありません。
 
@@ -43,6 +45,10 @@ sudo chown -R root:wheel /Library/Audio/Plug-Ins/HAL/GPTCallMixer-ChatGPT.driver
 4. 必要なマイク・システムオーディオ権限を許可し、短い音声で両方向を確認します。イヤホンを使うとスピーカーからの回り込みを減らせます。
 
 会議AIなどから音声をMeetへ直接送る場合も、出力を `GPT Call Mixer → Call` にし、Meetのマイクを同じデバイスにします。`→ ChatGPT` は別の経路です。
+
+## Meet議事録モード（Slack／Discord → Google Meet）
+
+アプリの「Meet議事録モード」にチェックを入れると、SlackハドルやDiscordの会話と物理マイクを `GPT Call Mixer → Call` に送ります。ChromeのGoogle Meetでこのデバイスをマイクにし、対象プランの「Take notes」を開始すると、Meetが議事録をGoogleドキュメントに保存します。macOSの既定入力は変更しません。手順と文字起こしの制約は [docs/MEET_NOTES.md](docs/MEET_NOTES.md)、レビュー結果は [docs/REVIEW_MEET_NOTES.md](docs/REVIEW_MEET_NOTES.md) を参照してください。
 
 ## 制約と終了時の挙動
 

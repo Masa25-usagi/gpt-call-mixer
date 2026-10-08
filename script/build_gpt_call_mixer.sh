@@ -66,13 +66,15 @@ for input_file in \
     GPTCallMixerApp/GPTCallMixerEngine.mm \
     GPTCallMixerApp/GPTCallMixerEngine.h \
     GPTCallMixerApp/AudioRingBuffer.hpp \
+    GPTCallMixerApp/AudioProcessFamilies.h \
     GPTCallMixerApp/Info.plist \
     Driver/GPTCallMixer.c \
     Driver/LICENSE.txt \
     Driver/Info-ChatGPT.plist \
     Driver/Info-Call.plist \
     Tests/AudioRingBufferTests.cpp \
-    Tests/MeetNotesModeTests.m; do
+    Tests/MeetNotesModeTests.m \
+    Tests/AudioProcessFamilyTests.m; do
     [[ -f "$PROJECT_ROOT/$input_file" ]] || die "必須入力がありません: $input_file"
 done
 
@@ -132,6 +134,16 @@ fi
     -framework AppKit -framework Foundation -framework CoreAudio \
     -o "$BUILD_ROOT/MeetNotesModeTests"
 "$BUILD_ROOT/MeetNotesModeTests"
+
+"$CLANG" -arch "$HOST_ARCH" -isysroot "$SDK_PATH" -std=c11 -fobjc-arc -fblocks -fmodules \
+    -fmodules-cache-path="$MODULE_CACHE" -mmacosx-version-min="$MIN_VERSION" -O2 \
+    -Wall -Wextra -Werror -c "$PROJECT_ROOT/Tests/AudioProcessFamilyTests.m" \
+    -o "$BUILD_ROOT/AudioProcessFamilyTests.o"
+"$CLANGXX" -arch "$HOST_ARCH" -isysroot "$SDK_PATH" -mmacosx-version-min="$MIN_VERSION" \
+    "$BUILD_ROOT/AudioProcessFamilyTests.o" "$TEST_ENGINE_OBJECT" \
+    -framework AppKit -framework Foundation -framework CoreAudio \
+    -o "$BUILD_ROOT/AudioProcessFamilyTests"
+"$BUILD_ROOT/AudioProcessFamilyTests"
 
 build_driver() {
     local route="$1"

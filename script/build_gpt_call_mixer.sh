@@ -14,6 +14,19 @@ readonly APP_OUTPUT="$DIST_ROOT/GPTCallMixer.app"
 readonly DRIVER_OUTPUT="$DIST_ROOT/GPTCallMixerDrivers"
 readonly ARCHIVE_OUTPUT="$DIST_ROOT/GPTCallMixer-local-build.zip"
 readonly MIN_VERSION="14.2"
+# Target architectures. Default is a universal (Apple Silicon + Intel) build so
+# the HAL drivers load natively in coreaudiod on either kind of Mac.
+# Override with e.g. GPT_CALL_MIXER_ARCHS="x86_64" for the previous Intel-only build.
+readonly TARGET_ARCHS="${GPT_CALL_MIXER_ARCHS:-arm64 x86_64}"
+ARCH_FLAGS=()
+for target_arch in $TARGET_ARCHS; do
+    case "$target_arch" in
+        arm64|x86_64) ARCH_FLAGS+=(-arch "$target_arch") ;;
+        *) printf 'GPT Call Mixer build error: unsupported arch: %s\n' "$target_arch" >&2; exit 2 ;;
+    esac
+done
+[[ "${#ARCH_FLAGS[@]}" -gt 0 ]] || { printf 'GPT Call Mixer build error: no target arch\n' >&2; exit 2; }
+readonly HOST_ARCH="$(uname -m)"
 
 die() {
     printf 'GPT Call Mixer build error: %s\n' "$*" >&2
@@ -24,7 +37,8 @@ usage() {
     cat <<'USAGE'
 Usage: ./script/build_gpt_call_mixer.sh [--verify]
 
-Builds and ad-hoc signs the Intel x86_64 GPT Call Mixer app and its two local
+Builds and ad-hoc signs the GPT Call Mixer app (universal arm64 + x86_64 by
+default; set GPT_CALL_MIXER_ARCHS to override) and its two local
 AudioServerPlugIn bundles. --verify is accepted as an explicit reminder that
 the command only builds/verifies; installation and launch never occur.
 USAGE
@@ -57,7 +71,8 @@ for input_file in \
     Driver/LICENSE.txt \
     Driver/Info-ChatGPT.plist \
     Driver/Info-Call.plist \
-    Tests/AudioRingBufferTests.cpp; do
+    Tests/AudioRingBufferTests.cpp \
+    Tests/MeetNotesModeTests.m; do
     [[ -f "$PROJECT_ROOT/$input_file" ]] || die "必須入力がありません: $input_file"
 done
 
@@ -77,26 +92,46 @@ readonly CLANGXX="$(xcrun --sdk macosx --find clang++)"
     "$CHATGPT_DRIVER/Contents/MacOS" "$CHATGPT_DRIVER/Contents/Resources" \
     "$CALL_DRIVER/Contents/MacOS" "$CALL_DRIVER/Contents/Resources"
 
-"$CLANGXX" -arch x86_64 -isysroot "$SDK_PATH" -std=c++17 -fobjc-arc -fblocks -fmodules \
+"$CLANGXX" "${ARCH_FLAGS[@]}" -isysroot "$SDK_PATH" -std=c++17 -fobjc-arc -fblocks -fmodules \
     -fmodules-cache-path="$MODULE_CACHE" -mmacosx-version-min="$MIN_VERSION" -O2 \
     -Wall -Wextra -Werror -c "$PROJECT_ROOT/GPTCallMixerApp/GPTCallMixerEngine.mm" \
     -o "$BUILD_ROOT/GPTCallMixerEngine.o"
 
-"$CLANG" -arch x86_64 -isysroot "$SDK_PATH" -fobjc-arc -fblocks -fmodules \
+"$CLANG" "${ARCH_FLAGS[@]}" -isysroot "$SDK_PATH" -fobjc-arc -fblocks -fmodules \
     -fmodules-cache-path="$MODULE_CACHE" -mmacosx-version-min="$MIN_VERSION" -O2 \
     -Wall -Wextra -Werror -c "$PROJECT_ROOT/GPTCallMixerApp/main.m" \
     -o "$BUILD_ROOT/GPTCallMixerMain.o"
 
-"$CLANGXX" -arch x86_64 -isysroot "$SDK_PATH" -std=c++17 -fobjc-arc -fblocks \
+"$CLANGXX" "${ARCH_FLAGS[@]}" -isysroot "$SDK_PATH" -std=c++17 -fobjc-arc -fblocks \
     -mmacosx-version-min="$MIN_VERSION" -O2 \
     "$BUILD_ROOT/GPTCallMixerMain.o" "$BUILD_ROOT/GPTCallMixerEngine.o" \
     -framework AppKit -framework Foundation -framework CoreAudio \
     -o "$APP_STAGE/Contents/MacOS/GPTCallMixer"
 /bin/cp "$PROJECT_ROOT/GPTCallMixerApp/Info.plist" "$APP_STAGE/Contents/Info.plist"
 
-"$CLANGXX" -arch x86_64 -isysroot "$SDK_PATH" -std=c++17 -O2 -Wall -Wextra -Werror \
+"$CLANGXX" -arch "$HOST_ARCH" -isysroot "$SDK_PATH" -std=c++17 -O2 -Wall -Wextra -Werror \
     "$PROJECT_ROOT/Tests/AudioRingBufferTests.cpp" -o "$BUILD_ROOT/AudioRingBufferTests"
 "$BUILD_ROOT/AudioRingBufferTests"
+
+# Controller regressions use a fake audio engine and isolated preferences.
+# A cross-only build still needs a native engine object to run these tests.
+TEST_ENGINE_OBJECT="$BUILD_ROOT/GPTCallMixerEngine.o"
+if ! lipo -verify_arch "$HOST_ARCH" "$TEST_ENGINE_OBJECT" >/dev/null 2>&1; then
+    TEST_ENGINE_OBJECT="$BUILD_ROOT/GPTCallMixerEngine-test-host.o"
+    "$CLANGXX" -arch "$HOST_ARCH" -isysroot "$SDK_PATH" -std=c++17 -fobjc-arc -fblocks -fmodules \
+        -fmodules-cache-path="$MODULE_CACHE" -mmacosx-version-min="$MIN_VERSION" -O2 \
+        -Wall -Wextra -Werror -c "$PROJECT_ROOT/GPTCallMixerApp/GPTCallMixerEngine.mm" \
+        -o "$TEST_ENGINE_OBJECT"
+fi
+"$CLANG" -arch "$HOST_ARCH" -isysroot "$SDK_PATH" -std=c11 -fobjc-arc -fblocks -fmodules \
+    -fmodules-cache-path="$MODULE_CACHE" -mmacosx-version-min="$MIN_VERSION" -O2 \
+    -Wall -Wextra -Werror -c "$PROJECT_ROOT/Tests/MeetNotesModeTests.m" \
+    -o "$BUILD_ROOT/MeetNotesModeTests.o"
+"$CLANGXX" -arch "$HOST_ARCH" -isysroot "$SDK_PATH" -mmacosx-version-min="$MIN_VERSION" \
+    "$BUILD_ROOT/MeetNotesModeTests.o" "$TEST_ENGINE_OBJECT" \
+    -framework AppKit -framework Foundation -framework CoreAudio \
+    -o "$BUILD_ROOT/MeetNotesModeTests"
+"$BUILD_ROOT/MeetNotesModeTests"
 
 build_driver() {
     local route="$1"
@@ -104,7 +139,7 @@ build_driver() {
     local executable="$3"
     local plist="$4"
 
-    "$CLANG" -arch x86_64 -isysroot "$SDK_PATH" -mmacosx-version-min="$MIN_VERSION" \
+    "$CLANG" "${ARCH_FLAGS[@]}" -isysroot "$SDK_PATH" -mmacosx-version-min="$MIN_VERSION" \
         -std=c11 -fblocks -O2 -Wall -Wextra -Werror -bundle \
         -D GPT_CALL_MIXER_ROUTE="$route" \
         -framework CoreAudio -framework CoreFoundation \
@@ -123,18 +158,22 @@ plutil -lint "$APP_STAGE/Contents/Info.plist" \
 /usr/bin/cmp "$PROJECT_ROOT/Driver/LICENSE.txt" "$CHATGPT_DRIVER/Contents/Resources/LICENSE.txt"
 /usr/bin/cmp "$PROJECT_ROOT/Driver/LICENSE.txt" "$CALL_DRIVER/Contents/Resources/LICENSE.txt"
 
-verify_x86_64() {
+verify_archs() {
     local binary="$1"
-    [[ "$(lipo -archs "$binary")" == "x86_64" ]] || die "x86_64単一バイナリではありません: $binary"
+    local actual
+    actual="$(lipo -archs "$binary")"
+    for target_arch in $TARGET_ARCHS; do
+        [[ " $actual " == *" $target_arch "* ]] || die "$target_arch スライスがありません（$actual）: $binary"
+    done
 }
 
-verify_x86_64 "$APP_STAGE/Contents/MacOS/GPTCallMixer"
-verify_x86_64 "$CHATGPT_DRIVER/Contents/MacOS/GPTCallMixer-ChatGPT"
-verify_x86_64 "$CALL_DRIVER/Contents/MacOS/GPTCallMixer-Call"
-file "$CHATGPT_DRIVER/Contents/MacOS/GPTCallMixer-ChatGPT" | /usr/bin/grep -q 'Mach-O 64-bit bundle x86_64' \
-    || die "ChatGPT driverがx86_64 MH_BUNDLEではありません"
-file "$CALL_DRIVER/Contents/MacOS/GPTCallMixer-Call" | /usr/bin/grep -q 'Mach-O 64-bit bundle x86_64' \
-    || die "Call driverがx86_64 MH_BUNDLEではありません"
+verify_archs "$APP_STAGE/Contents/MacOS/GPTCallMixer"
+verify_archs "$CHATGPT_DRIVER/Contents/MacOS/GPTCallMixer-ChatGPT"
+verify_archs "$CALL_DRIVER/Contents/MacOS/GPTCallMixer-Call"
+file "$CHATGPT_DRIVER/Contents/MacOS/GPTCallMixer-ChatGPT" | /usr/bin/grep -q 'Mach-O 64-bit bundle' \
+    || die "ChatGPT driverがMH_BUNDLEではありません"
+file "$CALL_DRIVER/Contents/MacOS/GPTCallMixer-Call" | /usr/bin/grep -q 'Mach-O 64-bit bundle' \
+    || die "Call driverがMH_BUNDLEではありません"
 nm -gU "$CHATGPT_DRIVER/Contents/MacOS/GPTCallMixer-ChatGPT" | /usr/bin/grep -q '_GPTCallMixer_Create' \
     || die "ChatGPT driver factory symbolがありません"
 nm -gU "$CALL_DRIVER/Contents/MacOS/GPTCallMixer-Call" | /usr/bin/grep -q '_GPTCallMixer_Create' \
@@ -198,6 +237,7 @@ printf '\nGPT Call Mixer build: PASS\n'
 printf '  App: %s\n' "$APP_OUTPUT"
 printf '  Drivers (not installed): %s\n' "$DRIVER_OUTPUT"
 printf '  Canonical verified archive: %s\n' "$ARCHIVE_OUTPUT"
+printf '  Architectures: %s\n' "$TARGET_ARCHS"
 printf '  Signature: ad-hoc (local-only; no Developer ID or notarization)\n'
 printf '  Note: loose .app metadata may be changed later by the Documents file provider\n'
 printf '  Existing MeetVoiceBridge: untouched\n'

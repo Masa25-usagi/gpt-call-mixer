@@ -9,6 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) pid_t pid;
 @property(nonatomic, copy) NSString *name;
 @property(nonatomic, copy) NSString *bundleID;
+@property(nonatomic, copy) NSString *executablePath;
 @property(nonatomic, copy) NSString *detail;
 @property(nonatomic) BOOL active;
 @end

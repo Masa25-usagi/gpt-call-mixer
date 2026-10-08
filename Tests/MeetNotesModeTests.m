@@ -14,6 +14,10 @@
 @property(nonatomic) NSUInteger restoreCount;
 @property(nonatomic, copy) NSArray<GPTAudioCandidate *> *testMicrophones;
 @property(nonatomic, copy) NSArray<GPTAudioCandidate *> *testProcesses;
+@property(nonatomic, copy) NSString *lastCallFamily;
+@property(nonatomic, copy) NSString *lastGPTFamily;
+@property(nonatomic, copy) NSArray<NSNumber *> *lastCallObjects;
+@property(nonatomic, copy) NSArray<NSNumber *> *lastGPTObjects;
 @end
 
 @implementation TestMixerEngine
@@ -46,10 +50,10 @@
                  gptProcessFamily:(NSString *)gptProcessFamily
                             error:(NSError **)error {
     (void)microphoneDevice;
-    (void)callProcessObjects;
-    (void)callProcessFamily;
-    (void)gptProcessObjects;
-    (void)gptProcessFamily;
+    self.lastCallObjects = callProcessObjects;
+    self.lastCallFamily = callProcessFamily;
+    self.lastGPTObjects = gptProcessObjects;
+    self.lastGPTFamily = gptProcessFamily;
     if (error) *error = nil;
     self.startCount += 1;
     self.simulatedRunning = YES;
@@ -74,7 +78,7 @@ static GPTAudioCandidate *Candidate(AudioObjectID objectID, NSString *family, BO
     GPTAudioCandidate *candidate = [GPTAudioCandidate new];
     candidate.objectID = objectID;
     candidate.objectIDs = @[@(objectID)];
-    candidate.name = family;
+    candidate.name = GPTProcessFamilyName(family, family);
     candidate.bundleID = family;
     candidate.detail = @"Synthetic test candidate";
     candidate.active = active;
@@ -148,7 +152,7 @@ static void TestNotesDoesNotChangeDefaultInput(void) {
     TestMixerEngine *engine = nil;
     GPTCallMixerAppDelegate *controller = Controller(YES, &engine);
     // Even if the disabled control is modified programmatically, the routing
-    // action must keep the real default microphone for Slack/Discord.
+    // action must keep the real default microphone for conversation apps.
     controller.defaultInputCheckbox.state = NSControlStateValueOn;
     [controller start:nil];
     Check(engine.startCount == 1 && engine.running, @"Valid notes routing starts");
@@ -194,6 +198,73 @@ static void TestVoiceInputRestoration(void) {
     Check(engine.restoreCount == 1 && engine.simulatedDefaultInput == 99, @"Stop preserves an input changed by the user");
 }
 
+static void TestNewConversationApps(void) {
+    for (NSString *family in @[@"call.line", @"call.zoom", @"call.apple-phone"]) {
+        TestMixerEngine *engine = nil;
+        GPTCallMixerAppDelegate *controller = Controller(YES, &engine);
+        GPTAudioCandidate *source = Candidate(50, family, YES);
+        source.objectIDs = @[@50, @51];
+        engine.testProcesses = @[
+            Candidate(10, @"browser.chrome", YES),
+            Candidate(20, @"call.slack", NO),
+            source,
+            Candidate(40, @"gpt.desktop", NO)
+        ];
+        controller.hasRefreshedCandidates = NO;
+        [controller refresh:nil];
+        Check([[controller selectedCandidate:controller.gptPopup].bundleID isEqualToString:family],
+              @"An active LINE, Zoom, or Phone source is preferred over idle Slack");
+        [controller start:nil];
+        Check([engine.lastCallFamily isEqualToString:@"browser.chrome"] && [engine.lastGPTFamily isEqualToString:family],
+              @"Notes routes the selected app as the conversation source and Chrome as the Meet side");
+        Check([engine.lastGPTObjects isEqualToArray:@[@50, @51]], @"Notes forwards the entire app process group");
+        Check(engine.switchCount == 0 && engine.simulatedDefaultInput == 42, @"New notes sources retain the physical microphone");
+        [controller stop:nil];
+
+        SetMeetMode(controller, NO);
+        [controller selectPopup:controller.callPopup candidateWithBundleID:family];
+        [controller refresh:nil];
+        Check([[controller selectedCandidate:controller.callPopup].bundleID isEqualToString:family],
+              @"Re-detection preserves the explicitly selected call app");
+        [controller start:nil];
+        Check([engine.lastCallFamily isEqualToString:family] && [engine.lastGPTFamily isEqualToString:@"gpt.desktop"],
+              @"Voice routes the selected app as the call side and ChatGPT as the other side");
+        Check([engine.lastCallObjects isEqualToArray:@[@50, @51]], @"Voice forwards the entire app process group");
+        [controller stop:nil];
+
+        SetMeetMode(controller, YES);
+        [controller selectPopup:controller.gptPopup candidateWithBundleID:family];
+        // Simulate a new helper appearing after joining a call.
+        source.objectID = 52;
+        source.objectIDs = @[@52, @53];
+        [controller refresh:nil];
+        Check([[controller selectedCandidate:controller.gptPopup].bundleID isEqualToString:family],
+              @"Re-detection preserves the selected notes source despite new process IDs");
+        [controller start:nil];
+        Check([engine.lastGPTObjects isEqualToArray:@[@52, @53]], @"Restart uses the new helper IDs");
+        Check(engine.switchCount == 1, @"Only the previous Voice start changed the default input");
+        [controller stop:nil];
+        [controller updateWarning];
+        if ([family isEqualToString:@"call.apple-phone"]) {
+            Check([controller.warningLabel.stringValue containsString:@"FaceTime"], @"Phone selection discloses shared call audio");
+        }
+    }
+}
+
+static void TestIdlePhoneDoesNotOverrideSafari(void) {
+    TestMixerEngine *engine = nil;
+    GPTCallMixerAppDelegate *controller = Controller(YES, &engine);
+    engine.testProcesses = @[
+        Candidate(10, @"browser.chrome", YES),
+        Candidate(20, @"call.apple-phone", NO),
+        Candidate(30, @"browser.safari", NO)
+    ];
+    controller.hasRefreshedCandidates = NO;
+    [controller refresh:nil];
+    Check([[controller selectedCandidate:controller.gptPopup].bundleID isEqualToString:@"browser.safari"],
+          @"Idle Apple call services do not take priority over Safari");
+}
+
 int main(void) {
     @autoreleasepool {
         NSString *suite = [@"jp.local.gptcallmixer.tests." stringByAppendingString:NSUUID.UUID.UUIDString];
@@ -208,6 +279,8 @@ int main(void) {
             TestNotesDoesNotChangeDefaultInput();
             TestSharedProcessRejection();
             TestVoiceInputRestoration();
+            TestNewConversationApps();
+            TestIdlePhoneDoesNotOverrideSafari();
             printf("MeetNotesModeTests: PASS (synthetic audio engine, isolated preferences)\n");
         } @catch (NSException *exception) {
             fprintf(stderr, "MeetNotesModeTests: FAIL: %s\n", exception.reason.UTF8String);

@@ -1,8 +1,16 @@
 #import <AppKit/AppKit.h>
 #import "GPTCallMixerEngine.h"
+#import "AudioProcessFamilies.h"
 
 #include <stdio.h>
 #include <string.h>
+
+@interface GPTMixerDocumentView : NSStackView
+@end
+
+@implementation GPTMixerDocumentView
+- (BOOL)isFlipped { return YES; }
+@end
 
 @interface GPTCallMixerAppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, strong) NSWindow *window;
@@ -26,6 +34,8 @@
 @property(nonatomic, strong) NSButton *stopButton;
 @property(nonatomic) AudioObjectID previousDefaultInputDevice;
 @property(nonatomic) BOOL changedDefaultInput;
+@property(nonatomic) BOOL hasRefreshedCandidates;
+@property(nonatomic) BOOL refreshedMeetNotesMode;
 - (void)setupIfNeeded;
 @end
 
@@ -70,10 +80,12 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
 }
 
 - (NSTextField *)label:(NSString *)text size:(CGFloat)size weight:(NSFontWeight)weight {
-    NSTextField *label = [NSTextField labelWithString:text];
+    NSTextField *label = [NSTextField wrappingLabelWithString:text];
     label.font = [NSFont systemFontOfSize:size weight:weight];
     label.lineBreakMode = NSLineBreakByWordWrapping;
     label.maximumNumberOfLines = 0;
+    [label setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
+                                   forOrientation:NSLayoutConstraintOrientationHorizontal];
     return label;
 }
 
@@ -88,6 +100,9 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     [stack addArrangedSubview:titleLabel];
     [stack addArrangedSubview:button];
     [stack addArrangedSubview:detail];
+    [titleLabel.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES;
+    [button.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES;
+    [detail.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES;
     return stack;
 }
 
@@ -97,15 +112,15 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
 
 - (void)applyModeLabels {
     if ([self isMeetNotesMode]) {
-        self.microphoneRowDetail.stringValue = @"自分の声をMeetへ送ります。Slack/Discordのマイクは普段の物理マイクのまま使います。";
+        self.microphoneRowDetail.stringValue = @"自分の声をMeetへ送ります。会話アプリのマイクは普段の物理マイクのまま使います。";
         self.callRowTitle.stringValue = @"2. Google Meetを開いているブラウザ";
         self.callRowDetail.stringValue = @"通常はGoogle Chrome。MeetのマイクはGPT Call Mixer → Callにします（Meetの音声自体は議事録には使いません）。";
-        self.gptRowTitle.stringValue = @"3. Meetへ流す会話アプリ（Slackハドル／Discord）";
-        self.gptRowDetail.stringValue = @"Slack・Discordのデスクトップアプリ、またはSafariで開いたWeb版。Meetと同じChromeで開いたWeb版はタブ分離できないため使えません。";
+        self.gptRowTitle.stringValue = @"3. Meetへ流す会話アプリ";
+        self.gptRowDetail.stringValue = @"Slack・Discord・LINE・Zoom・Macの電話、またはSafariのWeb通話。通話に参加してから再検出します。Meetと同じブラウザでは分離できません。";
     } else {
         self.microphoneRowDetail.stringValue = @"この音声はChatGPTと通話相手の両方へ送ります。手元スピーカーにはモニターしません。";
         self.callRowTitle.stringValue = @"2. 通話側の音声プロセス";
-        self.callRowDetail.stringValue = @"Google Chrome（Meet）、将来はDiscordなど。Chromeを選ぶとMeet以外のChrome音声も対象になります。";
+        self.callRowDetail.stringValue = @"Google Meetのブラウザ、Slack・Discord・LINE・Zoom・Macの電話。選んだアプリの通話以外の音声も含みます。";
         self.gptRowTitle.stringValue = @"3. GPT Voice側の音声プロセス";
         self.gptRowDetail.stringValue = @"ChatGPT/Codexデスクトップ、またはSafariのChatGPT Web Voice。Web版はMeet=Chrome、Voice=Safariを推奨します。";
     }
@@ -116,7 +131,7 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     BOOL meetMode = [self isMeetNotesMode];
     [NSUserDefaults.standardUserDefaults setBool:meetMode forKey:kMeetNotesModeDefaultsKey];
     if (meetMode && !self.appliedMeetNotesMode) {
-        // Slack/Discord must keep using the real microphone, so never move the
+        // Conversation apps must keep using the real microphone, so never move the
         // macOS default input to a virtual device in this mode.
         self.voiceModeDefaultInputState = self.defaultInputCheckbox.state;
         self.defaultInputCheckbox.state = NSControlStateValueOff;
@@ -146,7 +161,7 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     scroll.hasVerticalScroller = YES;
     scroll.drawsBackground = NO;
 
-    NSStackView *root = [NSStackView stackViewWithViews:@[]];
+    NSStackView *root = [GPTMixerDocumentView stackViewWithViews:@[]];
     root.orientation = NSUserInterfaceLayoutOrientationVertical;
     root.alignment = NSLayoutAttributeLeading;
     root.spacing = 18;
@@ -164,7 +179,7 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     self.statusLabel.layer.cornerRadius = 8;
     [root addArrangedSubview:self.statusLabel];
 
-    self.meetNotesCheckbox = [NSButton checkboxWithTitle:@"Meet議事録モード（Slackハドル／Discordの会話をGoogle Meetへ流す）"
+    self.meetNotesCheckbox = [NSButton checkboxWithTitle:@"Meet議事録モード（会話アプリの音声をGoogle Meetへ流す）"
                                                   target:self
                                                   action:@selector(meetNotesModeChanged:)];
     self.meetNotesCheckbox.state = [NSUserDefaults.standardUserDefaults boolForKey:kMeetNotesModeDefaultsKey]
@@ -172,7 +187,7 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
         : NSControlStateValueOff;
     [root addArrangedSubview:self.meetNotesCheckbox];
     NSTextField *meetNotesDescription = [self label:
-        @"物理マイク＋Slack/Discordの相手の声をGPT Call Mixer → Callへ送ります。ChromeのMeetでこのデバイスをマイクにし、対象プランの「Take notes（Geminiのメモ）」を開始すると、Meetが議事録をGoogleドキュメントに保存します。"
+        @"物理マイク＋会話相手の声をGPT Call Mixer → Callへ送ります。LINEの音声・ビデオ通話、Zoom、Macの電話にも対応します。ChromeのMeetでこのデバイスをマイクにし、対象プランの「Take notes（Geminiのメモ）」を開始すると、Meetが議事録をGoogleドキュメントに保存します。"
         size:12
         weight:NSFontWeightRegular];
     meetNotesDescription.textColor = NSColor.secondaryLabelColor;
@@ -233,7 +248,7 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     NSTextField *instructions = [self label:
         @"ChatGPTデスクトップ／Web Voiceの入力：GPT Call Mixer → ChatGPT\n"
          "Google Meet／通話アプリの入力：GPT Call Mixer → Call\n"
-         "Meet議事録モード：Slack/Discordの入出力は普段のマイク・スピーカーのまま、ChromeのMeetだけマイクをGPT Call Mixer → Callにし、Meetのスピーカーはミュートします。\n\n"
+         "Meet議事録モード：会話アプリの入出力は普段のマイク・スピーカーのまま、ChromeのMeetだけマイクをGPT Call Mixer → Callにし、Meetのスピーカーはミュートします。\n\n"
          "Web VoiceをSafariで使い、入力デバイス選択が表示されない場合は、macOSの入力を一時的に「GPT Call Mixer → ChatGPT」へ設定します。"
          "Chrome同士はタブを分離できないため、MeetとWeb Voiceを同じChromeで同時利用しないでください。"
         size:12 weight:NSFontWeightRegular];
@@ -243,7 +258,6 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     [instructions.trailingAnchor constraintEqualToAnchor:instructionsBox.trailingAnchor constant:-12].active = YES;
     [instructions.topAnchor constraintEqualToAnchor:instructionsBox.topAnchor constant:26].active = YES;
     [instructions.bottomAnchor constraintEqualToAnchor:instructionsBox.bottomAnchor constant:-12].active = YES;
-    [instructionsBox.widthAnchor constraintGreaterThanOrEqualToConstant:680].active = YES;
     [root addArrangedSubview:instructionsBox];
 
     NSClipView *clip = [NSClipView new];
@@ -253,25 +267,35 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     self.window.contentView = scroll;
     [self applyModeLabels];
 
-    [root.widthAnchor constraintGreaterThanOrEqualToAnchor:scroll.widthAnchor constant:-2].active = YES;
+    [root.widthAnchor constraintEqualToAnchor:clip.widthAnchor].active = YES;
+    for (NSView *view in root.arrangedSubviews) {
+        if (view == buttons || [view isKindOfClass:NSButton.class]) {
+            [view.widthAnchor constraintLessThanOrEqualToAnchor:root.widthAnchor constant:-48].active = YES;
+        } else {
+            [view.widthAnchor constraintEqualToAnchor:root.widthAnchor constant:-48].active = YES;
+        }
+    }
 }
 
 - (BOOL)isCallCandidate:(GPTAudioCandidate *)candidate {
+    if (GPTIsSupportedCallFamily(candidate.bundleID)) return YES;
     NSString *value = [NSString stringWithFormat:@"%@ %@ %@", candidate.name, candidate.bundleID, candidate.detail].lowercaseString;
     return [value containsString:@"chrome"] || [value containsString:@"discord"]
-        || [value containsString:@"zoom"] || [value containsString:@"teams"]
+        || [value containsString:@"teams"]
         || [value containsString:@"safari"] || [value containsString:@"firefox"]
         || [value containsString:@"slack"];
 }
 
 - (BOOL)isConversationSourceCandidate:(GPTAudioCandidate *)candidate {
+    if (GPTIsSupportedCallFamily(candidate.bundleID)) return YES;
     NSString *value = [NSString stringWithFormat:@"%@ %@ %@", candidate.name, candidate.bundleID, candidate.detail].lowercaseString;
     return [value containsString:@"slack"] || [value containsString:@"discord"]
-        || [value containsString:@"zoom"] || [value containsString:@"teams"]
+        || [value containsString:@"teams"]
         || [self isGPTCandidate:candidate];
 }
 
 - (BOOL)isGPTCandidate:(GPTAudioCandidate *)candidate {
+    if ([candidate.bundleID isEqualToString:@"gpt.desktop"] || [candidate.bundleID hasPrefix:@"browser."]) return YES;
     NSString *value = [NSString stringWithFormat:@"%@ %@ %@", candidate.name, candidate.bundleID, candidate.detail].lowercaseString;
     return [value containsString:@"openai"] || [value containsString:@"chatgpt"]
         || [value containsString:@"codex"] || [value containsString:@"safari"]
@@ -320,40 +344,60 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     [self updateWarning];
 }
 
+- (NSString *)preferredConversationFamily {
+    NSArray<NSString *> *families = @[@"call.slack", @"call.discord", @"call.line", @"call.zoom", @"call.apple-phone"];
+    for (NSString *family in families) {
+        for (GPTAudioCandidate *candidate in self.engine.audioProcesses) {
+            if (candidate.active && [candidate.bundleID isEqualToString:family]) return family;
+        }
+    }
+    // Idle Apple services exist even when Phone is closed. Prefer an open
+    // conversation app or Safari before choosing those background services.
+    for (NSString *family in [families subarrayWithRange:NSMakeRange(0, families.count - 1)]) {
+        for (GPTAudioCandidate *candidate in self.engine.audioProcesses) {
+            if ([candidate.bundleID isEqualToString:family]) return family;
+        }
+    }
+    for (GPTAudioCandidate *candidate in self.engine.audioProcesses) {
+        if ([candidate.bundleID isEqualToString:@"browser.safari"]) return @"browser.safari";
+    }
+    return @"call.apple-phone";
+}
+
 - (void)refresh:(id)sender {
     if (self.engine.running) {
         self.statusLabel.stringValue = @"動作中は再検出できません。停止してから再検出してください。";
         return;
     }
+    BOOL meetMode = [self isMeetNotesMode];
+    BOOL sameMode = self.hasRefreshedCandidates && self.refreshedMeetNotesMode == meetMode;
+    AudioObjectID previousMicrophone = [self selectedCandidate:self.microphonePopup].objectID;
+    NSString *previousCallFamily = sameMode ? [self selectedCandidate:self.callPopup].bundleID : nil;
+    NSString *previousGPTFamily = sameMode ? [self selectedCandidate:self.gptPopup].bundleID : nil;
     NSError *error = nil;
     [self.engine refresh:&error];
     [self populate:self.microphonePopup candidates:self.engine.microphones filter:nil];
     [self populate:self.callPopup candidates:self.engine.audioProcesses filter:^BOOL(GPTAudioCandidate *candidate) {
         return [self isCallCandidate:candidate];
     }];
-    BOOL meetMode = [self isMeetNotesMode];
     [self populate:self.gptPopup candidates:self.engine.audioProcesses filter:^BOOL(GPTAudioCandidate *candidate) {
         return meetMode ? [self isConversationSourceCandidate:candidate] : [self isGPTCandidate:candidate];
     }];
     [self selectPopup:self.microphonePopup
         candidateWithObjectID:self.engine.currentDefaultInputDevice];
+    if (previousMicrophone != kAudioObjectUnknown) {
+        [self selectPopup:self.microphonePopup candidateWithObjectID:previousMicrophone];
+    }
     [self selectPopup:self.callPopup candidateWithBundleID:@"browser.chrome"];
     if (meetMode) {
-        // Prefer whichever conversation app is currently playing audio.
-        GPTAudioCandidate *slack = nil;
-        GPTAudioCandidate *discord = nil;
-        for (GPTAudioCandidate *candidate in self.engine.audioProcesses) {
-            if ([candidate.bundleID isEqualToString:@"call.slack"]) slack = candidate;
-            if ([candidate.bundleID isEqualToString:@"call.discord"]) discord = candidate;
-        }
-        NSString *preferred = (discord.active && !slack.active) ? @"call.discord"
-            : slack ? @"call.slack"
-            : discord ? @"call.discord"
-            : @"browser.safari";
-        [self selectPopup:self.gptPopup candidateWithBundleID:preferred];
+        [self selectPopup:self.gptPopup candidateWithBundleID:[self preferredConversationFamily]];
     } else {
         [self selectPopup:self.gptPopup candidateWithBundleID:@"gpt.desktop"];
     }
+    if (previousCallFamily) [self selectPopup:self.callPopup candidateWithBundleID:previousCallFamily];
+    if (previousGPTFamily) [self selectPopup:self.gptPopup candidateWithBundleID:previousGPTFamily];
+    self.hasRefreshedCandidates = YES;
+    self.refreshedMeetNotesMode = meetMode;
     self.statusLabel.stringValue = error.localizedDescription ?: self.engine.statusText;
     [self updateWarning];
 }
@@ -370,18 +414,20 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     if (gpt) [overlap intersectSet:[NSSet setWithArray:gpt.objectIDs]];
     if ([self isMeetNotesMode]) {
         if (call && gpt && (overlap.count > 0 || [call.bundleID isEqualToString:gpt.bundleID])) {
-            self.warningLabel.stringValue = @"MeetとSlack/Discordが同じブラウザです。Slack/Discordはデスクトップアプリか、Chrome以外のブラウザ（Safariなど）で開いてください。";
+            self.warningLabel.stringValue = @"Meetと会話アプリを同じブラウザにはできません。会話アプリはデスクトップ版か、別のブラウザ（Safariなど）で開いてください。";
         } else {
-            self.warningLabel.stringValue = @"MeetのマイクをGPT Call Mixer → Callにし、Meetのスピーカー（タブ）はミュートしてください。Slack/Discordはヘッドホン推奨です。";
+            self.warningLabel.stringValue = @"MeetのマイクをGPT Call Mixer → Callにし、Meetのスピーカー（タブ）はミュートしてください。会話アプリはヘッドホン推奨です。";
         }
-        return;
-    }
-    if (call && gpt && overlap.count > 0) {
+    } else if (call && gpt && overlap.count > 0) {
         self.warningLabel.stringValue = @"同じ音声プロセスは両側へ使えません。MeetをChrome、ChatGPT Web VoiceをSafariに分けてください。";
     } else if (call && gpt && [call.bundleID isEqualToString:gpt.bundleID] && [call.bundleID.lowercaseString containsString:@"chrome"]) {
         self.warningLabel.stringValue = @"Chrome同士はタブ単位に分離できません。Chrome + Safari構成を推奨します。";
     } else {
         self.warningLabel.stringValue = @"スピーカー使用時は物理マイクが音を拾うため、安定運用はヘッドホン推奨です。";
+    }
+    if ([call.bundleID isEqualToString:@"call.apple-phone"] || [gpt.bundleID isEqualToString:@"call.apple-phone"]) {
+        self.warningLabel.stringValue = [self.warningLabel.stringValue stringByAppendingString:
+            @" 電話はFaceTimeなどと通話音声を共有するため、同時利用すると両方の音が含まれる場合があります。"];
     }
 }
 
@@ -391,7 +437,7 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
     GPTAudioCandidate *gpt = [self selectedCandidate:self.gptPopup];
     if (!microphone || !call || !gpt) {
         self.statusLabel.stringValue = [self isMeetNotesMode]
-            ? @"マイク、Meetのブラウザ、Slack/Discordをすべて選択してください"
+            ? @"マイク、Meetのブラウザ、会話アプリをすべて選択してください"
             : @"マイク、通話側、GPT側をすべて選択してください";
         return;
     }
@@ -399,7 +445,7 @@ static NSString *const kMeetNotesModeDefaultsKey = @"MeetNotesMode";
         NSMutableSet<NSNumber *> *overlap = [NSMutableSet setWithArray:call.objectIDs];
         [overlap intersectSet:[NSSet setWithArray:gpt.objectIDs]];
         if (overlap.count > 0 || [call.bundleID isEqualToString:gpt.bundleID]) {
-            self.statusLabel.stringValue = @"MeetとSlack/Discordを同じアプリにはできません。Slack/Discordはデスクトップアプリか Safari で開いてください。";
+            self.statusLabel.stringValue = @"Meetと会話アプリを同じアプリにはできません。会話アプリはデスクトップ版か別のブラウザで開いてください。";
             return;
         }
     }
@@ -507,7 +553,7 @@ int main(int argc, const char *argv[]) {
             }
             printf("Audio process groups: %lu\n", (unsigned long)engine.audioProcesses.count);
             for (GPTAudioCandidate *candidate in engine.audioProcesses) {
-                printf("  %s [%s] objects=", candidate.name.UTF8String, candidate.active ? "active" : "idle");
+                printf("  %s [%s] family=%s objects=", candidate.name.UTF8String, candidate.active ? "active" : "idle", candidate.bundleID.UTF8String);
                 for (NSNumber *objectID in candidate.objectIDs) printf("%u ", objectID.unsignedIntValue);
                 printf("\n");
             }

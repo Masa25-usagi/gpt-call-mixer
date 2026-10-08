@@ -1,5 +1,6 @@
 #import "GPTCallMixerEngine.h"
 #import "AudioRingBuffer.hpp"
+#import "AudioProcessFamilies.h"
 
 #import <AppKit/AppKit.h>
 #import <CoreAudio/AudioHardwareTapping.h>
@@ -156,46 +157,6 @@ AudioObjectID DeviceForUID(NSString *targetUID) {
     return kAudioObjectUnknown;
 }
 
-NSString *ProcessFamilyKey(GPTAudioCandidate *candidate) {
-    NSString *value = [NSString stringWithFormat:@"%@ %@ %@", candidate.bundleID, candidate.name, candidate.detail].lowercaseString;
-    if ([value containsString:@"com.google.chrome"] || [value containsString:@"/google chrome.app/"]
-        || [value containsString:@"google chrome helper"]) return @"browser.chrome";
-    if ([value containsString:@"com.apple.safari"] || [value containsString:@"/safari.app/"]
-        || [value containsString:@"safari webkit"]
-        || [candidate.name.lowercaseString isEqualToString:@"safari graphics and media"]) return @"browser.safari";
-    if ([value containsString:@"org.mozilla.firefox"] || [value containsString:@"/firefox.app/"]) return @"browser.firefox";
-    if ([value containsString:@"com.microsoft.edgemac"] || [value containsString:@"/microsoft edge.app/"]) return @"browser.edge";
-    if ([value containsString:@"com.brave.browser"] || [value containsString:@"/brave browser.app/"]) return @"browser.brave";
-    if ([value containsString:@"company.thebrowser.browser"] || [value containsString:@"/arc.app/"]) return @"browser.arc";
-    if ([value containsString:@"com.operasoftware.opera"] || [value containsString:@"/opera.app/"]) return @"browser.opera";
-    if ([value containsString:@"com.vivaldi.vivaldi"] || [value containsString:@"/vivaldi.app/"]) return @"browser.vivaldi";
-    if ([value containsString:@"com.hnc.discord"] || [value containsString:@"com.discordapp.discord"]
-        || [value containsString:@"com.discord.discord"] || [value containsString:@"/discord.app/"]) return @"call.discord";
-    if ([value containsString:@"com.tinyspeck.slackmacgap"] || [value containsString:@"/slack.app/"]
-        || [value containsString:@"slack helper"]) return @"call.slack";
-    if ([value containsString:@"com.openai.codex"] || [value containsString:@"com.openai.chatgpt"]
-        || [value containsString:@"com.openai.chat"] || [value containsString:@"/chatgpt.app/"]
-        || [value containsString:@"/codex.app/"]) return @"gpt.desktop";
-    return @"";
-}
-
-NSString *ProcessFamilyName(NSString *key, NSString *fallback) {
-    NSDictionary<NSString *, NSString *> *names = @{
-        @"browser.chrome": @"Google Chrome（ブラウザ全体）",
-        @"browser.safari": @"Safari（ブラウザ全体）",
-        @"browser.firefox": @"Firefox（ブラウザ全体）",
-        @"browser.edge": @"Microsoft Edge（ブラウザ全体）",
-        @"browser.brave": @"Brave（ブラウザ全体）",
-        @"browser.arc": @"Arc（ブラウザ全体）",
-        @"browser.opera": @"Opera（ブラウザ全体）",
-        @"browser.vivaldi": @"Vivaldi（ブラウザ全体）",
-        @"call.discord": @"Discord（アプリ全体）",
-        @"call.slack": @"Slack（アプリ全体・ハドル）",
-        @"gpt.desktop": @"ChatGPT / Codex（アプリ全体）"
-    };
-    return names[key] ?: fallback;
-}
-
 NSArray<NSNumber *> *CurrentProcessObjectIDsForFamily(
     NSString *targetFamily,
     NSArray<NSNumber *> *fallbackObjectIDs
@@ -222,8 +183,9 @@ NSArray<NSNumber *> *CurrentProcessObjectIDsForFamily(
         candidate.detail = pathLength > 0
             ? [NSString stringWithUTF8String:pathBuffer]
             : @"";
+        candidate.executablePath = candidate.detail;
 
-        NSString *family = ProcessFamilyKey(candidate);
+        NSString *family = GPTProcessFamilyKey(candidate);
         NSString *resolvedFamily = family.length
             ? family
             : [NSString stringWithFormat:@"process.%u", processID];
@@ -868,6 +830,7 @@ struct MixerImplementation {
         char pathBuffer[PROC_PIDPATHINFO_MAXSIZE] = {};
         const int pathLength = proc_pidpath(pid, pathBuffer, sizeof(pathBuffer));
         NSString *path = pathLength > 0 ? [NSString stringWithUTF8String:pathBuffer] : @"";
+        candidate.executablePath = path;
         candidate.detail = [NSString stringWithFormat:@"%@ — PID %d — %@", candidate.bundleID.length ? candidate.bundleID : @"bundle IDなし", pid, path];
         candidate.active = runningOutput != 0;
         [rawProcesses addObject:candidate];
@@ -875,7 +838,7 @@ struct MixerImplementation {
 
     NSMutableDictionary<NSString *, NSMutableArray<GPTAudioCandidate *> *> *groups = [NSMutableDictionary dictionary];
     for (GPTAudioCandidate *candidate in rawProcesses) {
-        NSString *family = ProcessFamilyKey(candidate);
+        NSString *family = GPTProcessFamilyKey(candidate);
         NSString *key = family.length ? family : [NSString stringWithFormat:@"process.%u", candidate.objectID];
         if (groups[key] == nil) groups[key] = [NSMutableArray array];
         [groups[key] addObject:candidate];
@@ -888,7 +851,7 @@ struct MixerImplementation {
         GPTAudioCandidate *candidate = [GPTAudioCandidate new];
         candidate.objectID = first.objectID;
         candidate.pid = first.pid;
-        candidate.name = ProcessFamilyName(key, first.name);
+        candidate.name = GPTProcessFamilyName(key, first.name);
         candidate.bundleID = key;
         candidate.objectIDs = [members valueForKey:@"objectID"];
         NSUInteger activeCount = 0;

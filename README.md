@@ -77,3 +77,7 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory Tools/ChromeMeter
 ## ライセンス
 
 HALドライバはAppleのNullAudioサンプルの構成を参考にしており、元の許諾文を [Driver/LICENSE.txt](Driver/LICENSE.txt) に保持しています。ビルドしたドライバにも同じ文書を同梱します。その他の独自コードには、このリポジトリで新たなライセンスを付与していません。
+
+## ライセンス
+
+本プロジェクトの独自コードは[MIT License](LICENSE)で公開しています。ドライバに含まれる第三者のコードには、[Appleのライセンス表記](Driver/LICENSE.txt)が適用されます。各表記を保持してください。
